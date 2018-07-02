@@ -1,0 +1,10 @@
+body {
+    padding: 0;
+    margin: 0;
+}
+
+#map {
+    display: inline-block;
+    min-height: 98vh;
+    min-width: 100vw;
+}
