@@ -1,6 +1,16 @@
-var express = require('express');
-var app = express();
+const path = require("path");
+const express = require("express");
+const app = express();
 
-app.use(express.static('static'));
+app.set("views", path.resolve(__dirname, "views"));
+app.set("view engine", "ejs");
 
-app.listen(process.env.PORT || 5000);
+app.get("/", function(req, res) {
+    res.render("index", {
+        "dev": !process.argv[2]
+    });
+});
+
+app.use(express.static("static"));
+
+app.listen(process.env.PORT || 5001);
