@@ -19,6 +19,11 @@ let Angled_2Way_Aisle = 6.6;
 let Parallel_1Way_Aisle = 3.6;
 let Parallel_2Way_Aisle = 6;
 
+let __DRAW = true;
+let __DRAW_ROAD = true;
+let __INTERNAL_GENERATING = true;
+let __FIT_BOUNDS = false;
+
 firebase.initializeApp({
     apiKey: "AIzaSyCpQ67L2jxD_vsTjIiccgBr60sgC3LH7Yc",
     authDomain: "carpark-3fc4b.firebaseapp.com",
@@ -30,7 +35,7 @@ firebase.initializeApp({
 
 firebase.auth().signInAndRetrieveDataWithCredential(firebase.auth.EmailAuthProvider.credential("a@b.com", "test123"));
 
-let map = L.map("map").setView([1.35677, 103.8200699], 17);
+let map = L.map("map").setView([1.35677, 103.8200699], 19);
 let layerGroup = L.layerGroup();
 layerGroup.addTo(map);
 
@@ -42,16 +47,76 @@ let street = L.tileLayer("https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?a
 
 street.addTo(map);
 
-let cp = [];
+//let cp = [];
 
+//known problems
+//1) tight angle (<90) between area causes impossible-to-drive & park lots
+//2) small overlapping area
+//3) slow internal
+
+//tight angle
+/*let cp = [
+    [1.357762289845752, 103.818815946579],
+    [1.3563191102011094, 103.8189071416855],
+    [1.3570165577205422, 103.81945967674257],
+    [1.3578159396300515, 103.81934702396394],
+    [1.3577676548242303, 103.818815946579]
+];*/
+
+//small overlapping area
 /*let cp =[
     [1.3565410099139856, 103.82015903023031],
-    //[1.3565417332951493, 103.82015993165471],
+    [1.3565417332951493, 103.82015993165471],
     [1.3563268127133283, 103.82051456694151],
     [1.3562671680101281, 103.82051604011592],
     [1.3562679091607217, 103.82015811158628],
     [1.3565410099139856, 103.82015903023031]
 ];*/
+
+//odd shape
+/*let cp = [
+    [1.357762289845752, 103.818815946579],
+    [1.3563191102011094, 103.8189071416855],
+    [1.35650151957176, 103.82172346115112],
+    [1.3580037138657746, 103.82168054580688],
+    [1.3579500640856226, 103.82035017013551],
+    [1.3571077623813008, 103.82040381431581],
+    [1.3570165577205422, 103.81945967674257],
+    [1.3578159396300515, 103.81934702396394],
+    [1.3577676548242303, 103.818815946579]
+];*/
+
+// working
+/*let cp = [
+    [1.3577340214162406, 103.81852652470117],
+    [1.357744076876083, 103.8188342138892],
+    [1.3580512083071161, 103.81884638860357],
+    [1.3580517477405638, 103.81853297876661],
+    [1.3577340214162406, 103.81852652470117],
+];*/
+
+// missing area not generated
+/*let cp = [
+    [1.3593930407917294, 103.81853221915664],
+    [1.3574485248978956, 103.81799200549723],
+    [1.357261158133274, 103.81921806838365],
+    [1.3594269779451849, 103.82036261726172],
+    [1.3593930407917294, 103.81853221915664],
+];*/
+
+// large non-generated places
+let cp = [
+    [1.3586269656819374,103.82415836211294],
+    [1.35641969983983,103.8230514060706],
+    [1.3552676208953454,103.82278678938746],
+    [1.3547907986586425,103.82297689095141],
+    [1.3548803102700693,103.82473185192795],
+    [1.3555104132247744,103.82629348430784],
+    [1.356375426209527,103.82678173016757],
+    [1.3585566142764482,103.82587233558299],
+    [1.3591750609182445,103.82578290067615],
+    [1.3586269656819374,103.82415836211294],
+]
 
 class CarParkUi extends React.Component {
 
@@ -67,6 +132,7 @@ class CarParkUi extends React.Component {
         if (cp.length > 0) {
             drawPolygon(cp, "red");
             generateLots(cp);
+
         } else {
             this.polyline = new L.Draw.Polyline(map);
             this.polyline.enable();
@@ -87,7 +153,7 @@ class CarParkUi extends React.Component {
                 });
                 this.polyline.disable();
 
-                drawPolygon(latLngsArr, "red");
+                __DRAW ? drawPolygon(latLngsArr, "red") : "";
                 generateLots(latLngsArr);
 
                 this.setState({
@@ -183,7 +249,7 @@ map.fitBounds(cp1.getBounds());*/
 function drawGeojson(geojson) {
     let x = L.geoJSON(geojson, {});
     layerGroup.addLayer(x);
-    map.fitBounds(x.getBounds());
+    __FIT_BOUNDS ? map.fitBounds(x.getBounds()) : "";
 }
 
 function drawPoint(a, icon=null) {
@@ -198,29 +264,36 @@ function drawLine(a, b, color="blue") {
     let x = L.polyline([a, b], {color: color});
 
     layerGroup.addLayer(x);
-    map.fitBounds(x.getBounds());
+    __FIT_BOUNDS ? map.fitBounds(x.getBounds()) : "";
 }
 
 function drawPolygon(a, color="green") {
     let x = L.polygon(a, {color: color});
 
     layerGroup.addLayer(x);
-    map.fitBounds(x.getBounds());
+    __FIT_BOUNDS ? map.fitBounds(x.getBounds()) : "";
 }
 
-function generateAngledLots(start, end, clockwise=true) {
+function generateAngledLots(start, end, areaGeom, clockwise=true) {
     let cpStart = start, cpEnd, lot;
     let bearing = L.GeometryUtil.bearing(start, end);
     let distance = start.distanceTo(end);
     let maxLots = Math.floor(distance / CarParkWidth);
+
     let next = [];
     let lots = [];
 
     for (let i = 0; i < maxLots; i++) {
         cpEnd = L.GeometryUtil.destination(cpStart, bearing, CarParkWidth);
         lot = generateAngledLot(cpStart, cpEnd, clockwise);
-        lots.push(lot);
-        drawPolygon(lot);
+
+        let p3 = turf.point(toArray(lot[2]));
+        let p4 = turf.point(toArray(lot[3]));
+
+        if (turf.booleanPointInPolygon(p3, areaGeom) && turf.booleanPointInPolygon(p4, areaGeom)) {
+            lots.push(lot);
+            __DRAW ? drawPolygon(lot) : "";
+        }
 
         //find where to start next: code below takes the last point of first lot and third point of last lot
         if (i == 0) {
@@ -255,6 +328,10 @@ function toLatLng(a) {
     return L.latLng(a[0], a[1]);
 }
 
+function toArray(latLng) {
+    return [latLng.lat, latLng.lng];
+}
+
 function toPoint(a) {
     return L.point(a[0], a[1]);
 }
@@ -264,7 +341,7 @@ function calcBufferDistance(a, b, c, length = Angled_Length) {
     let angle2 = L.GeometryUtil.computeAngle(toPoint(b), toPoint(c));
     let triangleAngle = (angle2 + Math.sign(angle1) * (180 - Math.abs(angle1))) / 2;
     let subDistance = length / Math.tan(triangleAngle * (Math.PI / 180));
-    return subDistance;
+    return triangleAngle < 0 && triangleAngle > -90 ? [0, true] : [subDistance, false];
 }
 
 //1. for each line
@@ -276,9 +353,10 @@ function calcBufferDistance(a, b, c, length = Angled_Length) {
 function generateLots(points, skip=false) {
     if (points.length <= 2) return;
     let union;
+    let startExceedAngle = false, endExceedAngle = false;
     let first = points[0], second, third, start, end, startDistance = 0, roadCoord1, roadCoord2;
     let len = points.length;
-    let lots = [], roads = [];
+    let lots = [], roads = [], outer = [], inner = [];
     let clockwise = turf.booleanClockwise(points);
 
     //1. for each line
@@ -302,16 +380,15 @@ function generateLots(points, skip=false) {
             //1.1 find the relational start point of placing lot so that next line can continue to place lots
             let calcStart;
             if (index == 1) {
-                startDistance = calcBufferDistance(points[len - 2], first, second, Angled_Length);
+                [startDistance, startExceedAngle] = calcBufferDistance(points[len - 2], first, second, Angled_Length);
             }
 
             calcStart = L.GeometryUtil.destination(start, bearing, startDistance);
 
             //1.2 find the relational end point of placing lot so that next line can continue to place lots
-            let subDistance = calcBufferDistance(first, second, third, Angled_Length);
+            let subDistance;
+            [subDistance, endExceedAngle] = calcBufferDistance(first, second, third, Angled_Length);
             let calcEnd = L.GeometryUtil.destination(end, reverseBearing, subDistance);
-
-            startDistance = subDistance;
 
             //1.3 calculate distance of line and find the largest number of lots to place
             let startLatLng = calcStart;
@@ -322,13 +399,16 @@ function generateLots(points, skip=false) {
 
             //1.4 place lots in the center of the line
             let cpStart = L.GeometryUtil.destination(startLatLng, bearing, remainingHalfDist);
+            let cpEnd;
 
+            //draw all the parking lots out
             for (let i = 0; i < maxLots; i++) {
 
-                let cpEnd = L.GeometryUtil.destination(cpStart, bearing, CarParkWidth);
-                let lot = generateAngledLot(cpStart, cpEnd, clockwise);
+                cpEnd = L.GeometryUtil.destination(cpStart, bearing, CarParkWidth);
+                let lot = generateAngledLot(cpStart, cpEnd);
+
                 lots.push(lot);
-                drawPolygon(lot);
+                __DRAW ? drawPolygon(lot) : "";
 
                 if (i == 0) {
                     roadCoord1 = lot[3];
@@ -341,60 +421,121 @@ function generateLots(points, skip=false) {
                 cpStart = cpEnd;
             }
 
-            let road = generateRoad(roadCoord1, roadCoord2);
-            roads.push(road);
+            //generate roads in front of each parking lot
+            inner.push(generateRoad2(roadCoord1, roadCoord2, clockwise));
+            outer.push(roadCoord1);
+            outer.push(roadCoord2);
 
+            startDistance = subDistance;
+            startExceedAngle = endExceedAngle;
             first = second;
         });
 
-        //2. Merge all roads
-        let turfPolygons = roads.map(road => {
-            let points = road.map(point => {
-                return [point.lat, point.lng];
-            });
-            points.push(points[0]);
-            return turf.polygon([points]);
+        //transform to points in array only and connect to first coord
+        inner = inner.map(_ => {
+            return [toArray(_[0]), toArray(_[1])];
         });
 
-        union = turfPolygons[0];
-        for (let i = 1; i < turfPolygons.length; i++) {
-            union = turf.union(union, turfPolygons[i]);
+        outer = outer.map(_ => {
+            return toArray(_);
+        });
+        outer.push(outer[0]);
+
+        //2. loop thru every 2 lines in inner to find intersection
+        //  2.1. if intersection exists, the 2 inner points can be removed
+        //  2.2. else push in all 4 points
+        let line1, line2, intersect;
+        let innerPolygon = [];
+
+        for (let i = 0, len = inner.length; i < len; i++) {
+            line1 = turf.lineString(inner[((i - 1 + inner.length) % inner.length)]);
+            line2 = turf.lineString(inner[i % inner.length]);
+            intersect = turf.lineIntersect(line1, line2);
+
+            if (intersect.features.length > 0) {
+                // 2.1
+                innerPolygon.push(intersect.features[0].geometry.coordinates);
+            } else {
+                // 2.2
+                innerPolygon.push(inner[i % inner.length][0]);
+            }
         }
+
+        innerPolygon.push(innerPolygon[0]);
+
+        union = turf.polygon([outer]);
+        union.geometry.coordinates.push(innerPolygon);
+
     } else {
         union = turf.polygon([points]);
     }
 
+    if (__INTERNAL_GENERATING) {
 
-    let p, road, turfPolygon, coords;
-    for (let i = skip ? 0 : 1; i < union.geometry.coordinates.length; i++) {
-        coords = union.geometry.coordinates[i];
-        clockwise = turf.booleanClockwise(coords);
+        //generate carpark lots internally
+        let p, road, turfPolygon, coords, completed = {}, cont = true, rounds = 0, allGenerated = false;
+        let initIndex = skip ? 0 : 1;
+        while(cont && !allGenerated && rounds < 10) {
+            allGenerated = true;
+            rounds++;
+            for (let i = initIndex; i < union.geometry.coordinates.length; i++) {
+                coords = union.geometry.coordinates[i];
+                clockwise = turf.booleanClockwise(coords);
 
-        for (let j = 0, end = coords.length - 2; j < end; j++) {
-            road = generateFullLots(coords, clockwise, j, j+1);
+                // check if has been completed
+                if (checkIfCompleted(coords, completed)) continue;
+                allGenerated = false;
 
-            if (road) {
-                p = processRoad(road);
-                turfPolygon = turf.polygon([p]);
-                union = turf.union(union, turfPolygon);
+                //find longest of next 2 coordinates
+                let longestDist = 0;
+                let longestIndex = -1;
+                for (let j = 0, end = coords.length - 2; j < end; j++) {
+
+                    let first = toLatLng(coords[j]);
+                    let second = toLatLng(coords[j+1]);
+                    let dist = first.distanceTo(second);
+
+                    if (dist > longestDist) {
+                        longestDist = dist;
+                        longestIndex = j;
+                    }
+                }
+
+                //generate carpark using the longest length
+                road = generateFullLots(coords, clockwise, longestIndex, longestIndex+1, rounds);
+
+                //joining road back to road-system
+                if (road) {
+                    p = processRoad(road);
+                    turfPolygon = turf.polygon([p]);
+                    union = turf.union(union, turfPolygon);
+                } else {
+                    cont = false;
+                }
+
+                completed[coords[longestIndex].toString()] = true;
 
                 break;
             }
         }
 
-        /*road = generateFullLots(coords, clockwise);
-
-        if (!road) {
-            console.log(coords);
-            break;
-        }
-
-        p = processRoad(road);
-        turfPolygon = turf.polygon([p]);
-        union = turf.union(union, turfPolygon);*/
     }
 
-    drawGeojson(turf.flip(union));
+    __DRAW_ROAD ? drawGeojson(turf.flip(union)) : "";
+}
+
+function checkIfCompleted(coords, completed) {
+    let keys = Object.keys(completed);
+    return coords.some(coord => {
+        let coordInStr = coord.toString();
+        return keys.some(key => {
+            return key == coordInStr;
+        });
+    });
+}
+
+function compare(coordA, coordB) {
+    return coordA[0] == coordB[0];
 }
 
 function processRoad(road) {
@@ -414,9 +555,11 @@ function reversePoint(point) {
 //1. start with first 2 points,
 //2. find point to start draw and point to end
 //3. calc max number and populate them
+//4. populate second row of carpark lots
+//5. move next along line1 & line2
+//6. generate road
 function generateFullLots(area, clockwise=false, id0=0, id1=1) {
-
-    let road;
+    let road, areaGeom = turf.polygon([area]);
     try {
         let first = area[id0];
         let second = area[id1];
@@ -430,40 +573,36 @@ function generateFullLots(area, clockwise=false, id0=0, id1=1) {
 
         //      2.2 find corresponding start and end point
         let angle1 = findAngleBetween(line, line2);
-        let angle2 = findAngleBetween(line, line1);
-        if (angle1 < 90) {
-            let bearing1 = L.GeometryUtil.bearing(toLatLng(line[0]), toLatLng(line[1]));
-            let distance1 = Math.cos(angle1 * (Math.PI / 180)) * Angled_Length;
-            first = L.GeometryUtil.destination(toLatLng(line[0]), bearing1, distance1);
-        } else {
-            first = toLatLng(first);
-        }
+        let angle2 = findAngleBetween([line[1], line[0]], line1);
 
-        if (angle2 < 90) {
-            let bearing2 = L.GeometryUtil.bearing(toLatLng(line[1]), toLatLng(line[0]));
-            let distance2 = Math.cos(angle2 * (Math.PI / 180)) * Angled_Length;
-            second = L.GeometryUtil.destination(toLatLng(line[1]), bearing2, distance2);
-        } else {
-            second = toLatLng(second);
-        }
+        first = findTransitionPoint(angle1, line, first);
+        second = findTransitionPoint(angle2, [line[1], line[0]], second);
 
         //3. calc max number and populate them
         let lots, next;
 
-        [lots, next] = generateHorizontalAngledLots(first, second, clockwise);
+        [lots, next] = generateAngledLots(first, second, areaGeom, clockwise);
         if (lots.length <= 0) {
             return null;
         }
 
+        //4. populate second row of carpark lots
         next = nextToIntersect(next, line1, line2);
-        [lots, next] = generateHorizontalAngledLots(...next, clockwise);
+        let nextArr = [toArray(next[0]), toArray(next[1])];
+
+        next[0] = findTransitionPoint(angle1, nextArr, nextArr[0]);
+        next[1] = findTransitionPoint(angle2, [nextArr[1], nextArr[0]], nextArr[1]);
+
+        [lots, next] = generateAngledLots(...next, areaGeom, clockwise);
         if (lots.length <= 0) {
             return null;
         }
 
+        //5. move next along line1 & line2
         next = nextToIntersect(next, line1, line2);
 
-        road = generateRoad(...next, false);
+        //6. generate road
+        road = generateRoad(...next, clockwise);
 
         //from new road coords, continue extend to hit line1 & 2
         let newRoadCoords = nextToIntersect([road[2], road[3]], line1, line2);
@@ -486,7 +625,26 @@ function generateFullLots(area, clockwise=false, id0=0, id1=1) {
     return road;
 }
 
-function generateRoad(coord1, coord2, clockwise=true) {
+function findTransitionPoint(angle, line, point) {
+    if (angle < 90) {
+        let bearing = L.GeometryUtil.bearing(toLatLng(line[0]), toLatLng(line[1]));
+        let distance = Angled_Length / Math.tan(angle * (Math.PI / 180));
+        point = L.GeometryUtil.destination(toLatLng(line[0]), bearing, distance);
+    } else {
+        point = toLatLng(point);
+    }
+
+    return point;
+}
+
+function generateRoad2(coord1, coord2, clockwise) {
+    let coord3 = getPerpendicularDestination(map, coord1, coord2, Angled_1Way_Aisle, !clockwise);
+    let coord4 = getPerpendicularDestination(map, coord2, coord1, Angled_1Way_Aisle, clockwise);
+
+    return [coord3, coord4];
+}
+
+function generateRoad(coord1, coord2, clockwise) {
     let coord3 = getPerpendicularDestination(map, coord2, coord1, Angled_1Way_Aisle, clockwise);
     let coord4 = getPerpendicularDestination(map, coord1, coord2, Angled_1Way_Aisle, !clockwise);
 
@@ -497,7 +655,6 @@ function getPerpendicularDestination(map, from, point2, distance, clockwise) {
     let pointOnLine = L.GeometryUtil.rotatePoint(map, point2, clockwise ? 90 : -90, from);
     let bearing = L.GeometryUtil.bearing(from, pointOnLine);
     let destination = L.GeometryUtil.destination(from, bearing, distance);
-
     return destination;
 }
 
@@ -560,22 +717,13 @@ function findLineFromArea(area, index) {
     return [area[_index], area[_index + 1]];
 }
 
-function findAngleBetween(line1, line2) {
+function findAngleBetween(line1, line2, clockwise=true) {
     let angle1 = findAbsAngle(L.GeometryUtil.bearing(toLatLng(line1[0]), toLatLng(line1[1])));
     let angle2 = findAbsAngle(L.GeometryUtil.bearing(toLatLng(line2[0]), toLatLng(line2[1])));
-    return Math.abs(angle1 - angle2);
+    let angle = (Math.abs(angle2 > angle1 ? angle2 - angle1 : angle1 - angle2));
+    return angle > 180 ? 360 - angle : angle;
 }
 
 function findAbsAngle(angle) {
     return angle < 0 ? angle + 360 : angle;
-}
-
-function generateHorizontalAngledLots(start, end, clockwise=false) {
-    let lots, next;
-    let distance = start.distanceTo(end);
-    let maxRows = Math.floor(distance / Angled_Length);
-
-    [lots, next] = generateAngledLots(start, end, clockwise);
-
-    return [lots, next];
 }
