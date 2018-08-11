@@ -20,9 +20,12 @@ let Parallel_1Way_Aisle = 3.6;
 let Parallel_2Way_Aisle = 6;
 
 let __DRAW = true;
+let __PRE_DRAW_ROAD = false;
 let __DRAW_ROAD = true;
 let __INTERNAL_GENERATING = true;
 let __FIT_BOUNDS = false;
+let __GLOBAL_LIMIT = 25;
+let __ROUND_SNAPSHOT = -1;
 
 firebase.initializeApp({
     apiKey: "AIzaSyCpQ67L2jxD_vsTjIiccgBr60sgC3LH7Yc",
@@ -51,19 +54,20 @@ street.addTo(map);
 
 //known problems
 //1) tight angle (<90) between area causes impossible-to-drive & park lots
-//2) small overlapping area
-//3) slow internal
+//2) slow internal
+//3) road overlap into lots
+//4) large non-generated places
 
-//tight angle
+//tight angle making impossible to park lots
 /*let cp = [
     [1.357762289845752, 103.818815946579],
     [1.3563191102011094, 103.8189071416855],
     [1.3570165577205422, 103.81945967674257],
     [1.3578159396300515, 103.81934702396394],
-    [1.3577676548242303, 103.818815946579]
+    [1.357762289845752, 103.818815946579],
 ];*/
 
-//small overlapping area
+//small overlapping area, clockwise
 /*let cp =[
     [1.3565410099139856, 103.82015903023031],
     [1.3565417332951493, 103.82015993165471],
@@ -73,8 +77,8 @@ street.addTo(map);
     [1.3565410099139856, 103.82015903023031]
 ];*/
 
-//odd shape
-/*let cp = [
+//odd Guosen shape
+let cp = [
     [1.357762289845752, 103.818815946579],
     [1.3563191102011094, 103.8189071416855],
     [1.35650151957176, 103.82172346115112],
@@ -83,8 +87,8 @@ street.addTo(map);
     [1.3571077623813008, 103.82040381431581],
     [1.3570165577205422, 103.81945967674257],
     [1.3578159396300515, 103.81934702396394],
-    [1.3577676548242303, 103.818815946579]
-];*/
+    [1.357762289845752, 103.818815946579],
+];
 
 // working
 /*let cp = [
@@ -95,7 +99,7 @@ street.addTo(map);
     [1.3577340214162406, 103.81852652470117],
 ];*/
 
-// missing area not generated
+// working
 /*let cp = [
     [1.3593930407917294, 103.81853221915664],
     [1.3574485248978956, 103.81799200549723],
@@ -105,7 +109,7 @@ street.addTo(map);
 ];*/
 
 // large non-generated places
-let cp = [
+/*let cp = [
     [1.3586269656819374,103.82415836211294],
     [1.35641969983983,103.8230514060706],
     [1.3552676208953454,103.82278678938746],
@@ -116,7 +120,7 @@ let cp = [
     [1.3585566142764482,103.82587233558299],
     [1.3591750609182445,103.82578290067615],
     [1.3586269656819374,103.82415836211294],
-]
+]*/
 
 class CarParkUi extends React.Component {
 
@@ -219,22 +223,6 @@ map.on("click", (_) => {
 });*/
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*let carpark1 = [
-    [1.301132, 103.836941],
-    [1.301137, 103.835718],
-    [1.300542, 103.835723],
-    [1.300562, 103.836966],
-    [1.301132, 103.836941]
-];
-let cp1 = L.polygon(carpark1, {color: "red"}).addTo(map);
-
-map.fitBounds(cp1.getBounds());*/
-
-//let details = d3plus.largestRect(carpark1);
-//let within = L.polygon(details.points, {color: 'green'}).addTo(map);
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
 // function placeLots()
 //      1. for each line
 //          1.1 find the start point of reference from prev line and end point that can start to place lot
@@ -281,7 +269,10 @@ function generateAngledLots(start, end, areaGeom, clockwise=true) {
     let maxLots = Math.floor(distance / CarParkWidth);
 
     let next = [];
-    let lots = [];
+    let pushLots = [];
+    let lots = new Array(maxLots);
+    let skipArr = new Array(maxLots);
+    skipArr.fill(true);
 
     for (let i = 0; i < maxLots; i++) {
         cpEnd = L.GeometryUtil.destination(cpStart, bearing, CarParkWidth);
@@ -291,24 +282,43 @@ function generateAngledLots(start, end, areaGeom, clockwise=true) {
         let p4 = turf.point(toArray(lot[3]));
 
         if (turf.booleanPointInPolygon(p3, areaGeom) && turf.booleanPointInPolygon(p4, areaGeom)) {
-            lots.push(lot);
             __DRAW ? drawPolygon(lot) : "";
-        }
 
-        //find where to start next: code below takes the last point of first lot and third point of last lot
-        if (i == 0) {
-            next[0] = lot[3];
+            pushLots.push(lot);
+            lots[i] = lot;
+            skipArr[i] = false;
         }
-
-        if (i == maxLots - 1) {
-            next[1] = lot[2];
-        }
-        /////////////////////////
 
         cpStart = cpEnd;
     }
 
-    return [lots, next];
+    //find where to start next: code below takes the last point of first lot and third point of last lot
+    let cont1 = skipArr[0];
+    if (cont1) {
+        for (let i = 0; i < maxLots; i++) {
+            if (!skipArr[i]) {
+                next[0] = lots[i][3];
+                break;
+            }
+        }
+    } else {
+        next[0] = lots[0][2];
+    }
+
+    let cont2 = skipArr[maxLots - 1];
+    if (cont2) {
+        for (let i = maxLots - 1; i >= 0; i--) {
+            if (!skipArr[i]) {
+                next[1] = lots[i][2];
+                break;
+            }
+        }
+    } else {
+        next[1] = lots[maxLots - 1][2];
+    }
+    /////////////////////////
+
+    return [pushLots, next, [cont1, cont2]];
 }
 
 function generateAngledLot(coord1, coord2, clockwise=true) {
@@ -336,12 +346,18 @@ function toPoint(a) {
     return L.point(a[0], a[1]);
 }
 
-function calcBufferDistance(a, b, c, length = Angled_Length) {
-    let angle1 = L.GeometryUtil.computeAngle(toPoint(a), toPoint(b));
+// +angle1, +angle2 => |1 - 2|
+// +angle1, -angle2 => (1 - 2)
+// -angle1, +angle2 => 360 - (|1| - 2)
+// -angle1, -angle2 => |1 - 2|
+function calcBufferDistance(a, b, c, length = Angled_Length, clockwise) {
+    let angle1 = L.GeometryUtil.computeAngle(toPoint(b), toPoint(a));
     let angle2 = L.GeometryUtil.computeAngle(toPoint(b), toPoint(c));
-    let triangleAngle = (angle2 + Math.sign(angle1) * (180 - Math.abs(angle1))) / 2;
-    let subDistance = length / Math.tan(triangleAngle * (Math.PI / 180));
-    return triangleAngle < 0 && triangleAngle > -90 ? [0, true] : [subDistance, false];
+    let coordClockwise = turf.booleanClockwise([a, b, c, a]);
+    let thirdOption = ((angle1 < 0) && (angle1 < -90) && (angle2 > 0)) || ((angle2 < 0) && (angle2 < -90) && (angle1 > 0));
+    let triangleAngle = (thirdOption || (clockwise != coordClockwise) ? 360 - (Math.abs(angle1 - angle2)) : Math.abs(angle1 - angle2)) / 2;
+    let subDistance = Math.abs(length / Math.tan(triangleAngle * (Math.PI / 180)));
+    return triangleAngle > 90 ? [0, true] : [subDistance, false];
 }
 
 //1. for each line
@@ -351,6 +367,7 @@ function calcBufferDistance(a, b, c, length = Angled_Length) {
 //  1.4 place lots in the center of the line
 //2. Merge all roads
 function generateLots(points, skip=false) {
+    points = simplify(points);
     if (points.length <= 2) return;
     let union;
     let startExceedAngle = false, endExceedAngle = false;
@@ -363,13 +380,14 @@ function generateLots(points, skip=false) {
     if (!skip) {
         points.forEach((point, index) => {
             if (index == 0) return;
-
+            if (index == __ROUND_SNAPSHOT) {
+                drawPoint(point);
+            }
             second = point;
             third = (index + 1 < len) ? points[((index + 1) % len)] : points[1];
 
             let firstLatLng = toLatLng(first);
             let secondLatLng = toLatLng(second);
-            let thirdLatLng = toLatLng(third);
 
             start = firstLatLng;
             end = secondLatLng;
@@ -380,14 +398,14 @@ function generateLots(points, skip=false) {
             //1.1 find the relational start point of placing lot so that next line can continue to place lots
             let calcStart;
             if (index == 1) {
-                [startDistance, startExceedAngle] = calcBufferDistance(points[len - 2], first, second, Angled_Length);
+                [startDistance, startExceedAngle] = calcBufferDistance(points[len - 2], first, second, Angled_Length, clockwise);
             }
 
             calcStart = L.GeometryUtil.destination(start, bearing, startDistance);
 
             //1.2 find the relational end point of placing lot so that next line can continue to place lots
             let subDistance;
-            [subDistance, endExceedAngle] = calcBufferDistance(first, second, third, Angled_Length);
+            [subDistance, endExceedAngle] = calcBufferDistance(first, second, third, Angled_Length, clockwise);
             let calcEnd = L.GeometryUtil.destination(end, reverseBearing, subDistance);
 
             //1.3 calculate distance of line and find the largest number of lots to place
@@ -405,7 +423,7 @@ function generateLots(points, skip=false) {
             for (let i = 0; i < maxLots; i++) {
 
                 cpEnd = L.GeometryUtil.destination(cpStart, bearing, CarParkWidth);
-                let lot = generateAngledLot(cpStart, cpEnd);
+                let lot = generateAngledLot(cpStart, cpEnd, clockwise);
 
                 lots.push(lot);
                 __DRAW ? drawPolygon(lot) : "";
@@ -448,8 +466,10 @@ function generateLots(points, skip=false) {
         let innerPolygon = [];
 
         for (let i = 0, len = inner.length; i < len; i++) {
-            line1 = turf.lineString(inner[((i - 1 + inner.length) % inner.length)]);
-            line2 = turf.lineString(inner[i % inner.length]);
+            let firstIndex = ((i - 1 + inner.length) % inner.length);
+            let secondIndex = i % inner.length;
+            line1 = turf.lineString(inner[firstIndex]);
+            line2 = turf.lineString(inner[secondIndex]);
             intersect = turf.lineIntersect(line1, line2);
 
             if (intersect.features.length > 0) {
@@ -457,7 +477,8 @@ function generateLots(points, skip=false) {
                 innerPolygon.push(intersect.features[0].geometry.coordinates);
             } else {
                 // 2.2
-                innerPolygon.push(inner[i % inner.length][0]);
+                innerPolygon.push(inner[firstIndex][1]);
+                innerPolygon.push(inner[secondIndex][0]);
             }
         }
 
@@ -470,16 +491,20 @@ function generateLots(points, skip=false) {
         union = turf.polygon([points]);
     }
 
+    __PRE_DRAW_ROAD ? drawGeojson(turf.flip(union)) : "";
+
     if (__INTERNAL_GENERATING) {
 
         //generate carpark lots internally
         let p, road, turfPolygon, coords, completed = {}, cont = true, rounds = 0, allGenerated = false;
         let initIndex = skip ? 0 : 1;
-        while(cont && !allGenerated && rounds < 10) {
+        while(cont && !allGenerated && rounds < __GLOBAL_LIMIT) {
             allGenerated = true;
             rounds++;
             for (let i = initIndex; i < union.geometry.coordinates.length; i++) {
                 coords = union.geometry.coordinates[i];
+                coords = simplify(coords);
+                union.geometry.coordinates[i] = coords;
                 clockwise = turf.booleanClockwise(coords);
 
                 // check if has been completed
@@ -501,8 +526,14 @@ function generateLots(points, skip=false) {
                     }
                 }
 
+                if (rounds == __ROUND_SNAPSHOT) {
+                    drawPolygon(coords, "red");
+                }
+
                 //generate carpark using the longest length
                 road = generateFullLots(coords, clockwise, longestIndex, longestIndex+1, rounds);
+
+                if (rounds == __ROUND_SNAPSHOT) drawPolygon(road, "blue");
 
                 //joining road back to road-system
                 if (road) {
@@ -511,6 +542,7 @@ function generateLots(points, skip=false) {
                     union = turf.union(union, turfPolygon);
                 } else {
                     cont = false;
+                    union.geometry.coordinates.splice(i, 1);
                 }
 
                 completed[coords[longestIndex].toString()] = true;
@@ -522,6 +554,13 @@ function generateLots(points, skip=false) {
     }
 
     __DRAW_ROAD ? drawGeojson(turf.flip(union)) : "";
+}
+
+function simplify(coords) {
+    return turf.simplify(turf.polygon([coords]), {
+        tolerance: 0.00001,
+        highQuality: true
+    }).geometry.coordinates[0];
 }
 
 function checkIfCompleted(coords, completed) {
@@ -558,7 +597,7 @@ function reversePoint(point) {
 //4. populate second row of carpark lots
 //5. move next along line1 & line2
 //6. generate road
-function generateFullLots(area, clockwise=false, id0=0, id1=1) {
+function generateFullLots(area, clockwise=false, id0=0, id1=1, rounds) {
     let road, areaGeom = turf.polygon([area]);
     try {
         let first = area[id0];
@@ -579,9 +618,9 @@ function generateFullLots(area, clockwise=false, id0=0, id1=1) {
         second = findTransitionPoint(angle2, [line[1], line[0]], second);
 
         //3. calc max number and populate them
-        let lots, next;
+        let lots, next, cont;
 
-        [lots, next] = generateAngledLots(first, second, areaGeom, clockwise);
+        [lots, next, cont] = generateAngledLots(first, second, areaGeom, clockwise);
         if (lots.length <= 0) {
             return null;
         }
@@ -593,16 +632,25 @@ function generateFullLots(area, clockwise=false, id0=0, id1=1) {
         next[0] = findTransitionPoint(angle1, nextArr, nextArr[0]);
         next[1] = findTransitionPoint(angle2, [nextArr[1], nextArr[0]], nextArr[1]);
 
-        [lots, next] = generateAngledLots(...next, areaGeom, clockwise);
+        [lots, next, cont] = generateAngledLots(...next, areaGeom, clockwise);
         if (lots.length <= 0) {
             return null;
         }
+
+        let cache = next;
 
         //5. move next along line1 & line2
         next = nextToIntersect(next, line1, line2);
 
         //6. generate road
         road = generateRoad(...next, clockwise);
+
+        //revert back to cache
+        cont.forEach((_, index) => {
+            if (cont[index]) {
+                road[index] = cache[index];
+            }
+        });
 
         //from new road coords, continue extend to hit line1 & 2
         let newRoadCoords = nextToIntersect([road[2], road[3]], line1, line2);
